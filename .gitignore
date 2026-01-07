@@ -1,0 +1,38 @@
+# Byte-compiled / cache
+__pycache__/
+*.py[cod]
+*.pyo
+
+# Virtual environments
+.venv/
+venv/
+.env
+.python-version
+
+# Packages / build artifacts
+*.egg-info/
+dist/
+build/
+pip-wheel-metadata/
+
+# Testing / coverage
+.pytest_cache/
+.coverage*
+
+# IDE / tooling
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Notebooks
+.ipynb_checkpoints/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Logs / local data
+*.log
+*.tmp
+.cache/

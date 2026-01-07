@@ -1,0 +1,9 @@
+fastapi[standard]
+modal
+matplotlib
+pandas
+seaborn
+scikit-learn
+openpyxl
+requests
+python-multipart
