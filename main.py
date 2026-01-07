@@ -7,7 +7,6 @@ deletions, and insertions across multiple genome assemblies.
 """
 
 import modal
-import math
 from pydantic import BaseModel
 from enum import Enum
 from typing import Optional
@@ -57,11 +56,6 @@ class MutationType(str, Enum):
     SNV = "SNV"  # Single Nucleotide Variant
     DELETION = "DELETION"  # Deletion
     INSERTION = "INSERTION"  # Insertion
-    DUPLICATION = "DUPLICATION"  # Duplication (sequence is duplicated)
-    MICROSATELLITE = "MICROSATELLITE"  # Microsatellite (short tandem repeat expansion/contraction)
-    INDEL = "INDEL"  # Combined insertion/deletion
-    INVERSION = "INVERSION"  # Inversion (sequence is reversed)
-    TRANSLOCATION = "TRANSLOCATION"  # Translocation (sequence moved to different location)
 
 
 class VariantRequest(BaseModel):
@@ -157,7 +151,7 @@ def analyze_variant(
         alternative: Alternative nucleotide(s) or empty string for deletion
         window_seq: The reference sequence window (8192 bp)
         model: Evo2 model instance
-        mutation_type: Type of mutation (SNV, DELETION, INSERTION, DUPLICATION, etc.)
+        mutation_type: Type of mutation (SNV, DELETION, INSERTION)
     
     Returns:
         Dictionary containing:
@@ -185,69 +179,6 @@ def analyze_variant(
         # Insertion: insert alternative sequence after reference position
         var_seq = window_seq[:relative_pos_in_window+1] + alternative + window_seq[relative_pos_in_window+1:]
     
-    elif mutation_type == MutationType.DUPLICATION:
-        # Duplication: duplicate the reference sequence
-        # For duplication, reference contains the sequence to be duplicated
-        # alternative can specify number of copies (default 2) or be the duplicated sequence
-        dup_seq = reference if reference else window_seq[relative_pos_in_window:relative_pos_in_window+1]
-        dup_length = len(dup_seq)
-        
-        # If alternative is numeric, it's the number of copies; otherwise use it as the duplicated sequence
-        if alternative and alternative.isdigit():
-            # Alternative is a number - duplicate the reference that many times
-            num_copies = int(alternative)
-            duplicated = dup_seq * num_copies
-        elif alternative:
-            # Alternative is the duplicated sequence itself
-            duplicated = alternative
-        else:
-            # Default: duplicate once (2 copies total)
-            duplicated = dup_seq * 2
-        
-        # Insert duplicated sequence after the original
-        var_seq = window_seq[:relative_pos_in_window+dup_length] + duplicated + window_seq[relative_pos_in_window+dup_length:]
-    
-    elif mutation_type == MutationType.MICROSATELLITE:
-        # Microsatellite: short tandem repeat expansion/contraction
-        # reference: the repeat unit (e.g., "CAG")
-        # alternative: expanded/contracted repeat (e.g., "CAGCAGCAG" for expansion, or fewer repeats for contraction)
-        repeat_unit = reference if reference else window_seq[relative_pos_in_window:relative_pos_in_window+1]
-        repeat_length = len(repeat_unit)
-        
-        if alternative:
-            # Use alternative as the expanded/contracted repeat sequence
-            expanded_repeat = alternative
-        else:
-            # Default: expand by one repeat unit
-            expanded_repeat = repeat_unit * 2
-        
-        # Replace the reference repeat with the expanded/contracted version
-        # Find the end of the repeat region (simplified: assume single repeat unit at position)
-        var_seq = window_seq[:relative_pos_in_window] + expanded_repeat + window_seq[relative_pos_in_window+repeat_length:]
-    
-    elif mutation_type == MutationType.INDEL:
-        # Combined insertion/deletion: delete reference sequence and insert alternative
-        del_length = len(reference) if reference else 1
-        var_seq = window_seq[:relative_pos_in_window] + alternative + window_seq[relative_pos_in_window+del_length:]
-    
-    elif mutation_type == MutationType.INVERSION:
-        # Inversion: reverse the reference sequence
-        inv_seq = reference if reference else window_seq[relative_pos_in_window:relative_pos_in_window+1]
-        inv_length = len(inv_seq)
-        reversed_seq = inv_seq[::-1]  # Reverse the sequence
-        var_seq = window_seq[:relative_pos_in_window] + reversed_seq + window_seq[relative_pos_in_window+inv_length:]
-    
-    elif mutation_type == MutationType.TRANSLOCATION:
-        # Translocation: move sequence to different location
-        # For translocation, we need both source and target positions
-        # Since we only have one position, we'll treat it as a deletion at source + insertion at target
-        # For simplicity, we'll treat alternative as the sequence to insert at a new location
-        # This is a simplified implementation - full translocation would require more context
-        trans_seq = reference if reference else window_seq[relative_pos_in_window:relative_pos_in_window+1]
-        trans_length = len(trans_seq)
-        # Remove from original position and insert alternative (which represents the translocated sequence)
-        var_seq = window_seq[:relative_pos_in_window] + alternative + window_seq[relative_pos_in_window+trans_length:]
-    
     else:
         raise ValueError(f"Unsupported mutation type: {mutation_type}")
     
@@ -258,59 +189,19 @@ def analyze_variant(
     # Calculate delta score (negative = loss of function, positive = maintained function)
     delta_score = var_score - ref_score
     
-    # Improved classification using percentile-based approach
-    # Based on empirical distribution of delta scores from large-scale variant analysis
-    # This approach is more generalizable than gene-specific thresholds
+    # Classification threshold and standard deviations from BRCA1 training data
+    # These values were determined by running brca1_example.remote()
+    threshold = -0.0009178519
+    lof_std = 0.0015140239  # Loss of function standard deviation
+    func_std = 0.0009016589  # Functional standard deviation
     
-    # Empirical percentiles from evo2 analysis across diverse variants
-    # These are calibrated on a broader dataset than BRCA1 alone
-    # Pathogenic variants typically have delta_score < -0.001 (approximately 10th percentile)
-    # Benign variants typically have delta_score > -0.0005 (approximately 50th percentile)
-    
-    # Use adaptive threshold based on delta score magnitude
-    # More negative = more likely pathogenic
-    # More positive = more likely benign
-    
-    # Classification using sigmoid-based probability estimation
-    # This provides smoother, more calibrated predictions
-    
-    # Calibration parameters (can be tuned based on validation data)
-    # These are more conservative and generalizable than BRCA1-specific values
-    pathogenic_threshold = -0.001  # Conservative threshold for pathogenic classification
-    benign_threshold = -0.0003     # Threshold for confident benign classification
-    
-    # Calculate probability of pathogenicity using sigmoid function
-    # This provides a continuous probability estimate rather than hard threshold
-    # The sigmoid is centered around the pathogenic threshold
-    # Scale factor controls the steepness of the transition
-    scale_factor = 5000  # Controls transition steepness (higher = sharper transition)
-    pathogenicity_prob = 1.0 / (1.0 + math.exp(scale_factor * (delta_score - pathogenic_threshold)))
-    
-    # Classification with uncertainty zones
-    if delta_score < pathogenic_threshold:
+    # Classify variant based on delta score
+    if delta_score < threshold:
         prediction = "Likely pathogenic"
-        # Confidence based on distance from threshold and probability
-        # Further from threshold = higher confidence
-        distance_from_threshold = abs(delta_score - pathogenic_threshold)
-        # Normalize confidence (max distance ~0.01 for very pathogenic variants)
-        confidence = min(1.0, 0.5 + (distance_from_threshold / 0.01) * 0.5)
-    elif delta_score > benign_threshold:
-        prediction = "Likely benign"
-        # Confidence for benign variants
-        distance_from_threshold = abs(delta_score - benign_threshold)
-        confidence = min(1.0, 0.5 + (distance_from_threshold / 0.005) * 0.5)
+        confidence = min(1.0, abs(delta_score - threshold) / lof_std)
     else:
-        # Intermediate/uncertain zone
-        prediction = "Uncertain significance"
-        # Lower confidence in uncertain zone
-        # Confidence increases as we move away from the uncertain zone center
-        zone_center = (pathogenic_threshold + benign_threshold) / 2
-        distance_from_center = abs(delta_score - zone_center)
-        max_distance = abs(benign_threshold - zone_center)
-        confidence = 0.3 + (distance_from_center / max_distance) * 0.2  # 0.3 to 0.5 confidence
-    
-    # Also provide the raw probability for additional context
-    # This allows users to apply their own thresholds if needed
+        prediction = "Likely benign"
+        confidence = min(1.0, abs(delta_score - threshold) / func_std)
     
     return {
         "reference": reference,
@@ -318,7 +209,6 @@ def analyze_variant(
         "delta_score": float(delta_score),
         "prediction": prediction,
         "classification_confidence": float(confidence),
-        "pathogenicity_probability": float(pathogenicity_prob),  # Raw probability estimate
         "mutation_type": mutation_type.value
     }
 
@@ -475,18 +365,7 @@ class Evo2Model:
                     )
         else:
             # Auto-detect reference from genome sequence
-            # For most mutation types, use single base; for complex types, may need more context
-            if mutation_type in [MutationType.SNV, MutationType.DELETION, MutationType.INSERTION]:
-                reference = window_seq[relative_pos]
-            elif mutation_type == MutationType.DUPLICATION:
-                # For duplication, default to single base if not provided
-                reference = window_seq[relative_pos]
-            elif mutation_type == MutationType.MICROSATELLITE:
-                # For microsatellite, try to detect repeat unit (simplified: use single base)
-                reference = window_seq[relative_pos]
-            else:
-                # For other types, use single base as default
-                reference = window_seq[relative_pos]
+            reference = window_seq[relative_pos]
         
         print(f"Reference allele: {reference}")
         
@@ -514,72 +393,6 @@ class Evo2Model:
                 raise HTTPException(
                     status_code=400,
                     detail="For insertion, alternative must be a non-empty sequence of nucleotides (A, C, G, T)"
-                )
-            alternative = alternative.upper()
-        
-        elif mutation_type == MutationType.DUPLICATION:
-            # For duplication, alternative can be:
-            # 1. Number of copies (e.g., "2", "3")
-            # 2. The duplicated sequence itself (e.g., "ATCGATCG")
-            # 3. Empty (defaults to 2 copies)
-            if not alternative:
-                alternative = "2"  # Default to 2 copies
-            elif alternative.isdigit():
-                # Validate it's a reasonable number of copies
-                num_copies = int(alternative)
-                if num_copies < 1 or num_copies > 100:
-                    raise HTTPException(
-                        status_code=400,
-                        detail="For duplication, number of copies must be between 1 and 100"
-                    )
-            elif not all(c.upper() in "ACGT" for c in alternative):
-                raise HTTPException(
-                    status_code=400,
-                    detail="For duplication, alternative must be a number of copies or a sequence of nucleotides (A, C, G, T)"
-                )
-            alternative = alternative.upper()
-        
-        elif mutation_type == MutationType.MICROSATELLITE:
-            # For microsatellite, alternative is the expanded/contracted repeat sequence
-            if not alternative:
-                # Default: expand by one repeat unit
-                alternative = reference * 2
-            elif not all(c.upper() in "ACGT" for c in alternative):
-                raise HTTPException(
-                    status_code=400,
-                    detail="For microsatellite, alternative must be a sequence of nucleotides (A, C, G, T)"
-                )
-            alternative = alternative.upper()
-        
-        elif mutation_type == MutationType.INDEL:
-            # For INDEL, alternative is the inserted sequence
-            if not alternative or not all(c.upper() in "ACGT" for c in alternative):
-                raise HTTPException(
-                    status_code=400,
-                    detail="For INDEL, alternative must be a non-empty sequence of nucleotides (A, C, G, T)"
-                )
-            alternative = alternative.upper()
-        
-        elif mutation_type == MutationType.INVERSION:
-            # For inversion, alternative is optional (sequence will be reversed)
-            # If provided, it should match the reversed reference
-            if alternative:
-                if not all(c.upper() in "ACGT" for c in alternative):
-                    raise HTTPException(
-                        status_code=400,
-                        detail="For inversion, alternative (if provided) must be a sequence of nucleotides (A, C, G, T)"
-                    )
-                alternative = alternative.upper()
-            else:
-                # Will be computed as reversed reference in analyze_variant
-                alternative = ""
-        
-        elif mutation_type == MutationType.TRANSLOCATION:
-            # For translocation, alternative is the sequence to insert at new location
-            if not alternative or not all(c.upper() in "ACGT" for c in alternative):
-                raise HTTPException(
-                    status_code=400,
-                    detail="For translocation, alternative must be a non-empty sequence of nucleotides (A, C, G, T)"
                 )
             alternative = alternative.upper()
         
