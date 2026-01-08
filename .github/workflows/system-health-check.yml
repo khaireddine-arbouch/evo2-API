@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 name: System Health Check
 
 on:
@@ -100,3 +101,107 @@ jobs:
           else
             echo "FAILED: System Status: $STATUS_TEXT"
           fi
+=======
+name: System Health Check
+
+on:
+  schedule:
+    # Run every 6 hours to check if the system is running
+    - cron: '0 */6 * * *'
+  workflow_dispatch:
+    # Allow manual triggering
+  push:
+    branches:
+      - main
+      - master
+    paths:
+      - 'backend/main.py'
+      - 'backend/requirements.txt'
+      - '.github/workflows/system-health-check.yml'
+
+jobs:
+  health-check:
+    name: Check API Health Status
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: |
+          pip install requests
+
+      - name: Check API endpoint availability
+        id: api-check
+        env:
+          MODAL_API_ENDPOINT: ${{ secrets.MODAL_API_ENDPOINT }}
+          MODAL_API_KEY: ${{ secrets.MODAL_API_KEY }}
+        run: |
+          if [ -z "$MODAL_API_ENDPOINT" ]; then
+            echo "WARNING: MODAL_API_ENDPOINT not set. Skipping health check."
+            echo "status=skipped" >> $GITHUB_OUTPUT
+            echo "status_text=Skipped" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+          
+          python backend/.github/scripts/health_check.py
+          EXIT_CODE=$?
+          
+          if [ $EXIT_CODE -eq 0 ]; then
+            echo "status=healthy" >> $GITHUB_OUTPUT
+            echo "status_text=Operational" >> $GITHUB_OUTPUT
+            echo "status_color=green" >> $GITHUB_OUTPUT
+          else
+            echo "status=unhealthy" >> $GITHUB_OUTPUT
+            echo "status_text=Down" >> $GITHUB_OUTPUT
+            echo "status_color=red" >> $GITHUB_OUTPUT
+          fi
+          
+          exit $EXIT_CODE
+
+      - name: Comment on PR (if applicable)
+        if: github.event_name == 'pull_request' && steps.api-check.outputs.status != 'skipped'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const status = '${{ steps.api-check.outputs.status }}';
+            const statusText = '${{ steps.api-check.outputs.status_text }}';
+            const statusColor = '${{ steps.api-check.outputs.status_color }}';
+            
+            let comment = '## 🔍 API Health Check Results\n\n';
+            comment += `**Status:** ${statusText}\n\n`;
+            
+            if (status === 'healthy') {
+              comment += '✅ The API is operational and responding correctly.\n';
+            } else if (status === 'auth_failed') {
+              comment += '⚠️ The API is reachable but authentication failed. Please check API key configuration.\n';
+            } else {
+              comment += '❌ The API health check failed. Please investigate the deployment.\n';
+            }
+            
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: comment
+            });
+
+      - name: Display health status
+        if: always()
+        run: |
+          STATUS="${{ steps.api-check.outputs.status }}"
+          STATUS_TEXT="${{ steps.api-check.outputs.status_text }}"
+          
+          if [ "$STATUS" = "healthy" ]; then
+            echo "SUCCESS: System Status: $STATUS_TEXT"
+          else
+            echo "FAILED: System Status: $STATUS_TEXT"
+          fi
+>>>>>>> 8270dd25e630f73690688d5065950dfed596e9cf
