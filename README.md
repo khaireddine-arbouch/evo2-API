@@ -1,4 +1,5 @@
 # Evo2 Variant Pathogenicity Prediction API
+[![System Health Check](https://github.com/khaireddine-arbouch/evo2-API/actions/workflows/system-health-check.yml/badge.svg)](https://github.com/khaireddine-arbouch/evo2-API/actions/workflows/system-health-check.yml)
 
 **Researcher:** Khaireddine Arbouch
 
