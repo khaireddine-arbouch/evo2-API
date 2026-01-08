@@ -1,4 +1,5 @@
 # Evo2 Variant Pathogenicity Prediction API
+[![Pylint](https://github.com/khaireddine-arbouch/evo2-API/actions/workflows/pylint.yml/badge.svg)](https://github.com/khaireddine-arbouch/evo2-API/actions/workflows/pylint.yml)
 
 **Researcher:** Khaireddine Arbouch
 

@@ -36,3 +36,35 @@ Thumbs.db
 *.log
 *.tmp
 .cache/
+
+# Modal / deployment
+.modal/
+*.modal.json
+
+# API keys / secrets
+.env.local
+.env.production
+secrets.json
+
+# Model files (too large for git)
+*.pth
+*.pt
+*.ckpt
+*.safetensors
+*.bin
+models/
+checkpoints/
+
+# Large data files
+*.h5
+*.hdf5
+*.fna
+*.fasta
+*.fa
+*.gb
+*.gff
+*.gz
+*.zip
+
+# Jupyter notebook outputs
+*.ipynb
